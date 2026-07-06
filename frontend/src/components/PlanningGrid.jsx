@@ -58,7 +58,13 @@ export default function PlanningGrid({
         const rt = visibleRts[i]
         const row = {
           _productId:       product.id,
-          _productName:     product.name,
+          // Only the first row of a product's block carries the name text —
+          // rowSpan visually covers the rows below with this cell, but the
+          // ag-Grid DOM still renders each of those rows' own (otherwise
+          // duplicate) cell underneath. Leaving them blank means there's
+          // nothing to leak through if the overlay's stacking order slips
+          // during fast scrolling or row selection.
+          _productName:     i === 0 ? product.name : '',
           _productCode:     product.code,
           _rowTypeId:       rt.id,
           _rowTypeName:     rt.name,

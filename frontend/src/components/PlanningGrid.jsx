@@ -16,10 +16,13 @@ const ROLE_COLORS = {
 const EDITABLE_ROLES = new Set(['plan', 'inbound_actual', 'demand_forecast', 'demand_actual', 'adjustment'])
 
 const FLAG_COLORS = ['#e6821e', '#c0392b', '#2e7d32', '#1565C0', '#7b3fb0']
+// Links used to require picking a type (reschedule/split/transfer) with
+// quantity + conversion factor — simplified to a single generic connector
+// with just a note, matching how 変更ハイライト/取り消し just take a memo.
+// "reschedule" is kept as the literal value for backward compatibility with
+// links already created under the old 3-type system.
 const LINK_TYPES = [
-  { id: 'reschedule', label: '予定変更（同じ品目・別日）', color: '#e6821e' },
-  { id: 'split',      label: '分割（1ロットが複数品目へ）', color: '#7b3fb0' },
-  { id: 'transfer',   label: '移動（蔵替など、別の保管先へ）', color: '#0f8a7a' },
+  { id: 'reschedule', label: 'リンク', color: '#1565C0' },
 ]
 const LINK_COLOR = Object.fromEntries(LINK_TYPES.map(t => [t.id, t.color]))
 
@@ -37,6 +40,7 @@ export default function PlanningGrid({
   const [popover, setPopover] = useState(null)       // {x,y,productId,rowTypeId,date,existing}
   const [pendingSource, setPendingSource] = useState(null)  // {productId,rowTypeId,date}
   const [linkModal, setLinkModal] = useState(null)    // {source,target}
+  const [linkPopover, setLinkPopover] = useState(null) // {x,y,link}
   const [overlayTick, setOverlayTick] = useState(0)
 
   // Build flat row array with rowSpan metadata
@@ -399,12 +403,18 @@ export default function PlanningGrid({
           ))}
         </defs>
         {linkPaths.map(({ id, d, color, link }) => (
-          <path key={id} d={d} stroke={color} strokeWidth={2} fill="none"
-            markerEnd={`url(#arrow-${link.link_type})`}
-            style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
-            onClick={() => { if (window.confirm('このリンクを削除しますか？')) onDeleteLink?.(id) }}>
-            <title>{link.link_type}{link.quantity ? ` ${link.quantity}${link.conversion_factor !== 1 ? ` ×${link.conversion_factor}` : ''}` : ''}{link.note ? ` — ${link.note}` : ''}</title>
-          </path>
+          <g key={id}>
+            {/* Wide invisible hit-area — the visible 2px line is too thin to reliably hover/click */}
+            <path d={d} stroke="transparent" strokeWidth={14} fill="none"
+              style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
+              onClick={(e) => {
+                const containerRect = containerRef.current.getBoundingClientRect()
+                setLinkPopover({ x: e.clientX - containerRect.left, y: e.clientY - containerRect.top, link: { ...link, id } })
+              }} />
+            <path d={d} stroke={color} strokeWidth={2} fill="none"
+              markerEnd={`url(#arrow-${link.link_type})`}
+              style={{ pointerEvents: 'none' }} />
+          </g>
         ))}
       </svg>
 
@@ -461,6 +471,17 @@ export default function PlanningGrid({
           }}
         />
       )}
+
+      {linkPopover && (
+        <LinkPopover
+          popover={linkPopover}
+          onClose={() => setLinkPopover(null)}
+          onDelete={() => {
+            onDeleteLink?.(linkPopover.link.id)
+            setLinkPopover(null)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -495,10 +516,29 @@ function FlagPopover({ popover, onClose, onSet, onClear }) {
   )
 }
 
+function LinkPopover({ popover, onClose, onDelete }) {
+  return (
+    <div style={{
+      position: 'absolute', left: popover.x, top: popover.y, zIndex: 20,
+      background: '#fff', border: '1px solid #ccc', borderRadius: 6, boxShadow: '0 4px 16px rgba(0,0,0,.15)',
+      padding: 10, width: 220, fontSize: 12,
+    }}>
+      <div style={{ marginBottom: 10, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+        {popover.link.note || <span style={{ color: '#999' }}>メモなし</span>}
+      </div>
+      <div style={{ display: 'flex', gap: 6, justifyContent: 'space-between' }}>
+        <button onClick={onDelete} style={{ fontSize: 11, color: '#c0392b', background: 'none', border: 'none', cursor: 'pointer' }}>
+          削除
+        </button>
+        <button onClick={onClose} style={{ fontSize: 11, color: '#888', background: 'none', border: 'none', cursor: 'pointer', marginLeft: 'auto' }}>
+          閉じる
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function LinkModal({ modal, onClose, onCreate }) {
-  const [linkType, setLinkType] = useState('reschedule')
-  const [quantity, setQuantity] = useState('')
-  const [conversion, setConversion] = useState('1')
   const [note, setNote] = useState('')
 
   return (
@@ -509,33 +549,13 @@ function LinkModal({ modal, onClose, onCreate }) {
         <div style={{ fontSize: 11, color: '#666', marginBottom: 10 }}>
           {modal.source.date} → {modal.target.date}
         </div>
-        <label style={{ display: 'block', fontSize: 11, color: '#666', marginBottom: 4 }}>種類</label>
-        <select value={linkType} onChange={e => setLinkType(e.target.value)}
-          style={{ width: '100%', padding: '5px 6px', marginBottom: 10, border: '1px solid #ccc', borderRadius: 5 }}>
-          {LINK_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
-        </select>
-        <label style={{ display: 'block', fontSize: 11, color: '#666', marginBottom: 4 }}>数量（任意）</label>
-        <input type="number" value={quantity} onChange={e => setQuantity(e.target.value)}
-          style={{ width: '100%', padding: '5px 6px', marginBottom: 10, border: '1px solid #ccc', borderRadius: 5 }} />
-        {linkType === 'transfer' && (
-          <>
-            <label style={{ display: 'block', fontSize: 11, color: '#666', marginBottom: 4 }}>換算係数（例: 副素材＝X40する → 40）</label>
-            <input type="number" value={conversion} onChange={e => setConversion(e.target.value)}
-              style={{ width: '100%', padding: '5px 6px', marginBottom: 10, border: '1px solid #ccc', borderRadius: 5 }} />
-          </>
-        )}
         <label style={{ display: 'block', fontSize: 11, color: '#666', marginBottom: 4 }}>メモ（任意）</label>
-        <input value={note} onChange={e => setNote(e.target.value)}
+        <input value={note} onChange={e => setNote(e.target.value)} autoFocus
           style={{ width: '100%', padding: '5px 6px', marginBottom: 14, border: '1px solid #ccc', borderRadius: 5 }} />
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button onClick={onClose} style={{ padding: '6px 14px', border: 'none', borderRadius: 5, background: '#eee', cursor: 'pointer' }}>キャンセル</button>
           <button
-            onClick={() => onCreate({
-              link_type: linkType,
-              quantity: quantity === '' ? null : Number(quantity),
-              conversion_factor: conversion === '' ? 1 : Number(conversion),
-              note: note || null,
-            })}
+            onClick={() => onCreate({ link_type: 'reschedule', quantity: null, conversion_factor: 1, note: note || null })}
             style={{ padding: '6px 14px', border: 'none', borderRadius: 5, background: '#1565C0', color: '#fff', cursor: 'pointer' }}>
             作成
           </button>

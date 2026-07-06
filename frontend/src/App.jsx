@@ -286,7 +286,7 @@ export default function App() {
           ) : showBulkStocktake ? (
             <BulkStocktakeScreen products={gridData?.products || []} editorName={editorName} />
           ) : showWorkerView ? (
-            gridData && <WorkerView gridData={gridData} />
+            gridData && <WorkerView gridData={gridData} cellFlags={cellFlags} canceledCells={canceledCells} />
           ) : filteredGridData && (
             <PlanningGrid
               gridData={filteredGridData}

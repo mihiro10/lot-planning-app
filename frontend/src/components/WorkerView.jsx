@@ -12,8 +12,24 @@ const s = {
 }
 
 function todayISO() { return new Date().toISOString().slice(0, 10) }
+function flagKey(productId, rowTypeId, date) { return `${productId}:${rowTypeId}:${date}` }
 
-export default function WorkerView({ gridData }) {
+function annotate(base, flag, canceled) {
+  const style = { ...base }
+  if (flag) {
+    style.background = flag.color + '33'
+    style.boxShadow = `inset 3px 0 0 ${flag.color}`
+    style.fontWeight = 700
+  }
+  if (canceled) {
+    style.textDecoration = 'line-through'
+    style.color = '#999'
+    style.background = '#eee'
+  }
+  return style
+}
+
+export default function WorkerView({ gridData, cellFlags = {}, canceledCells = {} }) {
   const { dates, row_types, products } = gridData
   const noteRt = row_types.find(rt => rt.role === 'note')
   const planRt = row_types.find(rt => rt.role === 'plan')
@@ -47,14 +63,26 @@ export default function WorkerView({ gridData }) {
             <React.Fragment key={product.id}>
               <tr>
                 <td style={s.nameCol} rowSpan={2}>{product.name}</td>
-                {dates.map(d => (
-                  <td key={d} style={s.noteCell(d === today)}>{notes[d] || ''}</td>
-                ))}
+                {dates.map(d => {
+                  const flag = cellFlags[flagKey(product.id, noteRt.id, d)]
+                  const canceled = canceledCells[flagKey(product.id, noteRt.id, d)]
+                  return (
+                    <td key={d} style={annotate(s.noteCell(d === today), flag, canceled)} title={flag?.note}>
+                      {notes[d] || ''}
+                    </td>
+                  )
+                })}
               </tr>
               <tr>
-                {dates.map(d => (
-                  <td key={d} style={s.planCell(d === today)}>{plans[d] ?? ''}</td>
-                ))}
+                {dates.map(d => {
+                  const flag = cellFlags[flagKey(product.id, planRt.id, d)]
+                  const canceled = canceledCells[flagKey(product.id, planRt.id, d)]
+                  return (
+                    <td key={d} style={annotate(s.planCell(d === today), flag, canceled)} title={flag?.note}>
+                      {plans[d] ?? ''}
+                    </td>
+                  )
+                })}
               </tr>
             </React.Fragment>
           ))}

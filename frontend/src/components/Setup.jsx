@@ -176,7 +176,7 @@ export default function Setup({ onComplete }) {
                 （{parsed.start_date} 〜 {parsed.end_date}）<br />
                 {parsed.products.slice(0, 8).map(p => (
                   <div key={p.name} style={{ marginTop: 3 }}>
-                    ✓ {p.name}{p.code ? ` [${p.code}]` : ''} — 在庫 {p.starting_inventory}
+                    ✓ {p.name}{p.code ? ` [${p.code}]` : ''}
                   </div>
                 ))}
                 {parsed.products.length > 8 && (

@@ -117,22 +117,14 @@ def _month_id_for_date(con, ds: str) -> int:
 
 
 def _seed_for_product(con, product_id: int) -> tuple[date, float]:
-    """Earliest date we have any record for this product, and the starting
-    inventory to seed the continuous walk from (only ever read once, at the
-    earliest known month — later months' starting_inventory is bookkeeping
-    only, not fed back into the formula)."""
+    """Earliest date we have any record for this product. The walk always
+    starts from 0 — a product's real opening count is just its earliest
+    調整 daily_values row, same mechanism as any later stocktake correction."""
     earliest_val = con.execute(
         "SELECT MIN(date) AS d FROM daily_values WHERE product_id=?", (product_id,)
     ).fetchone()["d"]
-    seed_row = con.execute(
-        "SELECT pmi.starting_inventory AS v, m.start_date AS d FROM product_month_inventory pmi "
-        "JOIN months m ON pmi.month_id=m.id WHERE pmi.product_id=? ORDER BY m.start_date ASC LIMIT 1",
-        (product_id,),
-    ).fetchone()
-    candidates = [d for d in (earliest_val, seed_row["d"] if seed_row else None) if d]
-    earliest = date.fromisoformat(min(candidates)) if candidates else date.today()
-    seed = seed_row["v"] if seed_row else 0.0
-    return earliest, (seed or 0.0)
+    earliest = date.fromisoformat(earliest_val) if earliest_val else date.today()
+    return earliest, 0.0
 
 
 def _canceled_keys(con, product_id: int) -> set[tuple[int, str]]:
@@ -182,7 +174,8 @@ def _build_continuous_grid(con, start_date: str, end_date: str) -> dict:
     row_type_roles = {rt["id"]: rt["role"] for rt in row_types}
 
     products = [dict(r) for r in con.execute(
-        "SELECT id, code, name, planner, mfg_location, category, min_stock, max_stock "
+        "SELECT id, code, name, planner, mfg_location, category, storage, mfg_name,"
+        " lot_size, lot_unit, min_stock, max_stock, lead_time, notes "
         "FROM products WHERE is_active=1 ORDER BY display_order, id"
     ).fetchall()]
     for p in products:
@@ -229,78 +222,6 @@ def _build_continuous_grid(con, start_date: str, end_date: str) -> dict:
     }
 
 
-def _build_grid_for_month(con, month_row) -> dict:
-    month_id = month_row["id"]
-    dates = _dates_in_range(month_row["start_date"], month_row["end_date"])
-
-    row_types = [dict(r) for r in con.execute(
-        "SELECT id, name, role, display_order, is_system, is_visible_default FROM row_types ORDER BY display_order"
-    ).fetchall()]
-    row_type_roles = {rt["id"]: rt["role"] for rt in row_types}
-
-    products = [dict(r) for r in con.execute(
-        "SELECT id, code, name, planner, mfg_location, category, min_stock, max_stock "
-        "FROM products WHERE is_active=1 ORDER BY display_order, id"
-    ).fetchall()]
-    for p in products:
-        p["planner"]       = _parse_json_list(p.get("planner"))
-        p["mfg_location"]  = _parse_json_list(p.get("mfg_location"))
-
-    result_products = []
-    for p in products:
-        pid = p["id"]
-        inv = con.execute(
-            "SELECT starting_inventory, pre_inventory FROM product_month_inventory "
-            "WHERE product_id=? AND month_id=?", (pid, month_id)
-        ).fetchone()
-        starting = inv["starting_inventory"] if inv else 0.0
-        pre      = inv["pre_inventory"]      if inv else 0.0
-
-        # Load all stored manual values for this product/month
-        rows = con.execute(
-            "SELECT row_type_id, date, value FROM daily_values "
-            "WHERE product_id=? AND month_id=?", (pid, month_id)
-        ).fetchall()
-        raw: dict = {(r["row_type_id"], r["date"]): r["value"] for r in rows}
-
-        p_info = con.execute(
-            "SELECT lot_size, lead_time FROM products WHERE id=?", (pid,)
-        ).fetchone()
-        computed = compute_product_grid(
-            dates, starting, p_info["lot_size"], p_info["lead_time"],
-            raw, row_type_roles
-        )
-
-        # Merge raw + computed into values dict keyed by row_type_id -> {date: value}
-        values: dict[str, dict[str, Any]] = {}
-        for rt in row_types:
-            rtid = rt["id"]
-            role = rt["role"]
-            day_vals: dict[str, Any] = {}
-            for d in dates:
-                ds = d.isoformat()
-                if role in ("inbound_planned", "final"):
-                    v = computed.get((rtid, ds))
-                else:
-                    v = raw.get((rtid, ds))
-                day_vals[ds] = v
-            values[str(rtid)] = day_vals
-
-        result_products.append({
-            **p,
-            "starting_inventory": starting,
-            "pre_inventory": pre,
-            "values": values,
-        })
-
-    return {
-        "month": dict(month_row),
-        "dates": [d.isoformat() for d in dates],
-        "row_types": row_types,
-        "products": result_products,
-    }
-
-
 # ── Month endpoints ───────────────────────────────────────────────────────────
 
 class MonthCreate(BaseModel):
@@ -327,24 +248,6 @@ def create_month(body: MonthCreate):
         con.execute("UPDATE months SET is_active=0")
         con.execute("UPDATE months SET is_active=1 WHERE id=?", (cur.lastrowid,))
         return {"id": cur.lastrowid}
-
-
-@app.get("/api/months/active/grid")
-def get_active_grid():
-    with get_db() as con:
-        month = con.execute("SELECT * FROM months WHERE is_active=1").fetchone()
-        if not month:
-            raise HTTPException(404, "No active month")
-        return _build_grid_for_month(con, month)
-
-
-@app.get("/api/months/{month_id}/grid")
-def get_grid(month_id: int):
-    with get_db() as con:
-        month = con.execute("SELECT * FROM months WHERE id=?", (month_id,)).fetchone()
-        if not month:
-            raise HTTPException(404, "Month not found")
-        return _build_grid_for_month(con, month)
 
 
 @app.get("/api/grid")
@@ -451,22 +354,6 @@ def update_product(product_id: int, body: ProductUpdate):
 def delete_product(product_id: int):
     with get_db() as con:
         con.execute("UPDATE products SET is_active=0 WHERE id=?", (product_id,))
-    return {"ok": True}
-
-
-@app.patch("/api/months/{month_id}/inventory/{product_id}")
-def update_inventory(month_id: int, product_id: int,
-                     body: dict):
-    starting = body.get("starting_inventory")
-    pre      = body.get("pre_inventory")
-    with get_db() as con:
-        con.execute(
-            "INSERT INTO product_month_inventory(product_id, month_id, starting_inventory, pre_inventory)"
-            " VALUES (?,?,?,?) ON CONFLICT(product_id,month_id) DO UPDATE SET "
-            "starting_inventory=COALESCE(excluded.starting_inventory, starting_inventory),"
-            "pre_inventory=COALESCE(excluded.pre_inventory, pre_inventory)",
-            (product_id, month_id, starting, pre),
-        )
     return {"ok": True}
 
 
@@ -776,15 +663,6 @@ def import_commit(body: ImportCommit):
                 # occurrence in these files) creates two rows instead of one.
                 existing_by_norm[_norm_name(p["name"])] = pid
 
-            # Inventory for this month
-            con.execute(
-                "INSERT INTO product_month_inventory(product_id, month_id, starting_inventory, pre_inventory)"
-                " VALUES (?,?,?,?) ON CONFLICT(product_id,month_id) DO UPDATE SET"
-                " starting_inventory=excluded.starting_inventory,"
-                " pre_inventory=excluded.pre_inventory",
-                (pid, month_id, p.get("starting_inventory", 0), p.get("pre_inventory", 0)),
-            )
-
             # Daily values
             daily = p.get("daily_values", {})
             for rtype_name, date_vals in daily.items():
@@ -797,6 +675,27 @@ def import_commit(body: ImportCommit):
                         " VALUES (?,?,?,?,?) ON CONFLICT(product_id,row_type_id,date)"
                         " DO UPDATE SET value=excluded.value",
                         (pid, rtid, month_id, date_str, value),
+                    )
+
+            # A brand-new product's opening count (在庫数 in the sheet) becomes
+            # its seed via a normal 調整 entry on the import's start date —
+            # same mechanism as any later stocktake correction, no separate
+            # "starting inventory" concept. Added on top of (not overwriting)
+            # any 調整 value the sheet itself carried for that date.
+            starting_inv = p.get("starting_inventory") or 0
+            if not existing_p and starting_inv:
+                adj_rtid = rt_by_name.get("調整")
+                if adj_rtid:
+                    existing_adj = con.execute(
+                        "SELECT value FROM daily_values WHERE product_id=? AND row_type_id=? AND date=?",
+                        (pid, adj_rtid, body.start_date),
+                    ).fetchone()
+                    new_val = (existing_adj["value"] if existing_adj and existing_adj["value"] else 0.0) + starting_inv
+                    con.execute(
+                        "INSERT INTO daily_values(product_id, row_type_id, month_id, date, value)"
+                        " VALUES (?,?,?,?,?) ON CONFLICT(product_id,row_type_id,date)"
+                        " DO UPDATE SET value=excluded.value",
+                        (pid, adj_rtid, month_id, body.start_date, new_val),
                     )
 
             # 備考 daily text notes

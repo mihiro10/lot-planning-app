@@ -23,10 +23,9 @@ const s = {
   btn:      { flex: 1, padding: '7px 0', border: 'none', borderRadius: 5, cursor: 'pointer', fontSize: 13, fontWeight: 600 },
 }
 
-export default function ProductPanel({ product, monthId, rowTypes = [], visibleRowTypes = [], productRowOverrides = {}, onSetProductRows, onClose, onSaved }) {
+export default function ProductPanel({ product, rowTypes = [], visibleRowTypes = [], productRowOverrides = {}, onSetProductRows, onClose, onSaved }) {
   const [form, setForm] = useState({})
   const [saving, setSaving] = useState(false)
-  const [startingInv, setStartingInv] = useState('')
   const [localRowIds, setLocalRowIds] = useState([])
   const [planners, setPlanners] = useState([])
   const [plannerInput, setPlannerInput] = useState('')
@@ -56,7 +55,6 @@ export default function ProductPanel({ product, monthId, rowTypes = [], visibleR
       max_stock:    product.max_stock    ?? 0,
       notes:        product.notes        ?? '',
     })
-    setStartingInv(product.starting_inventory ?? 0)
     getProductAttributes(product.id).then(setCustomAttrs)
   }, [product])
 
@@ -89,9 +87,6 @@ export default function ProductPanel({ product, monthId, rowTypes = [], visibleR
         lead_time: Number(form.lead_time),
         min_stock: Number(form.min_stock),
         max_stock: Number(form.max_stock),
-      })
-      await axios.patch(`/api/months/${monthId}/inventory/${product.id}`, {
-        starting_inventory: Number(startingInv),
       })
       await Promise.all(
         customAttrs.map(a => setAttributeValue(product.id, a.id, a.value ?? ''))
@@ -148,11 +143,6 @@ export default function ProductPanel({ product, monthId, rowTypes = [], visibleR
           <div style={s.section}>
             <div style={s.sHead}>在庫</div>
             <div style={s.row}>
-              <span style={s.label}>月初在庫数</span>
-              <input style={s.input} type="number" value={startingInv}
-                onChange={e => setStartingInv(e.target.value)} />
-            </div>
-            <div style={s.row}>
               <span style={s.label}>最低在庫</span>
               <input style={s.input} type="number" value={form.min_stock}
                 onChange={e => set('min_stock', e.target.value)} />
@@ -168,7 +158,7 @@ export default function ProductPanel({ product, monthId, rowTypes = [], visibleR
           <div style={s.section}>
             <div style={s.sHead}>入庫予定数の計算式</div>
             <div style={s.row}>
-              <span style={s.label}>ロット数</span>
+              <span style={s.label}>ロット内数</span>
               <input style={s.input} type="number" value={form.lot_size}
                 onChange={e => set('lot_size', e.target.value)} />
               <input style={{ ...s.input, width: 40, flex: 'none' }} value={form.lot_unit}

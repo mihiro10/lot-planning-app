@@ -36,15 +36,6 @@ CREATE TABLE IF NOT EXISTS products (
     is_active INTEGER DEFAULT 1
 );
 
-CREATE TABLE IF NOT EXISTS product_month_inventory (
-    id INTEGER PRIMARY KEY,
-    product_id INTEGER NOT NULL REFERENCES products(id),
-    month_id INTEGER NOT NULL REFERENCES months(id),
-    starting_inventory REAL DEFAULT 0,
-    pre_inventory REAL DEFAULT 0,
-    UNIQUE(product_id, month_id)
-);
-
 CREATE TABLE IF NOT EXISTS attribute_definitions (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
@@ -140,6 +131,9 @@ def init_db():
     cols = {r[1] for r in con.execute("PRAGMA table_info(daily_values)").fetchall()}
     if "text_value" not in cols:
         con.execute("ALTER TABLE daily_values ADD COLUMN text_value TEXT")
+    # product_month_inventory retired — 月初在庫数 now lives as a normal 調整
+    # daily_values row (see _migrate_starting_inventory.py for the one-time backfill).
+    con.execute("DROP TABLE IF EXISTS product_month_inventory")
     for name, role, order, is_sys, visible in SYSTEM_ROW_TYPES:
         con.execute(
             "INSERT INTO row_types(name, role, display_order, is_system, is_visible_default)"

@@ -10,7 +10,6 @@ import {
   getGrid, getRowTypes, createRowType, reorderRowTypes, connectWebSocket,
   getCellFlags, setCellFlag, clearCellFlag, getLotLinks, createLotLink, deleteLotLink,
   getCanceledCells, cancelCell, uncancelCell,
-  getMonths,
 } from './api'
 
 const s = {
@@ -54,7 +53,6 @@ export default function App() {
   const [showAnalysis, setShowAnalysis]   = useState(false)
   const [showBulkStocktake, setShowBulkStocktake] = useState(false)
   const [showWorkerView, setShowWorkerView] = useState(false)
-  const [currentMonthId, setCurrentMonthId] = useState(null)
   const [editorName, setEditorName]       = useState(() => localStorage.getItem('lot_planning_editor_name') || '')
   const wsRef = useRef(null)
 
@@ -64,9 +62,9 @@ export default function App() {
 
   const loadGrid = useCallback(async (r = range) => {
     try {
-      const [grid, rts, flags, links, canceled, months] = await Promise.all([
+      const [grid, rts, flags, links, canceled] = await Promise.all([
         getGrid(r.start, r.end), getRowTypes(), getCellFlags(r.start, r.end), getLotLinks(r.start, r.end),
-        getCanceledCells(r.start, r.end), getMonths(),
+        getCanceledCells(r.start, r.end),
       ])
       setGridData(grid)
       setRowTypes(rts)
@@ -78,10 +76,6 @@ export default function App() {
       const cancelMap = {}
       for (const c of canceled) cancelMap[flagKey(c.product_id, c.row_type_id, c.date)] = c
       setCanceledCells(cancelMap)
-      const today = todayISO()
-      const cur = months.find(m => m.start_date <= today && m.end_date >= today) || months[0]
-      setCurrentMonthId(cur?.id ?? null)
-
       const planners   = [...new Set(grid.products.flatMap(p => Array.isArray(p.planner) ? p.planner : []).filter(Boolean))]
       const locations  = [...new Set(grid.products.flatMap(p => Array.isArray(p.mfg_location) ? p.mfg_location : []).filter(Boolean))]
       const categories = [...new Set(grid.products.map(p => p.category).filter(Boolean))]
@@ -260,7 +254,6 @@ export default function App() {
       {selectedProduct && (
         <ProductPanel
           product={selectedProduct}
-          monthId={currentMonthId}
           rowTypes={rowTypes}
           visibleRowTypes={visibleRowTypes}
           productRowOverrides={productRowOverrides}

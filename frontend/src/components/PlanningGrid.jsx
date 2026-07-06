@@ -177,12 +177,18 @@ export default function PlanningGrid({
       byMonth[key].dates.push({ iso: d, day: obj.getDate() })
     }
 
+    const today = todayISO()
     const dateCols = Object.values(byMonth).map(group => ({
       headerName: group.label,
-      children: group.dates.map(({ iso, day }) => ({
+      children: group.dates.map(({ iso, day }) => {
+        const isToday = iso === today
+        // Planning happens in 10-day bands: 1-10, 11-20, 21-end of month.
+        const band = Math.min(2, Math.floor((day - 1) / 10))
+        return {
         field: iso,
         headerName: String(day),
-        width: 46,
+        width: 56,
+        headerClass: isToday ? 'date-is-today' : `date-band-${band}`,
         editable: (p) => !flagMode && !linkMode && !cancelMode && EDITABLE_ROLES.has(p.data._role),
         onCellClicked: onDateCellClicked,
         tooltipValueGetter: (p) => {
@@ -230,11 +236,16 @@ export default function PlanningGrid({
               pendingSource.rowTypeId === p.data._rowTypeId && pendingSource.date === iso) {
             base.boxShadow = 'inset 0 0 0 2px #1565C0'
           }
+          if (isToday) {
+            base.borderLeft = '2px solid #1565C0'
+            base.borderRight = '2px solid #1565C0'
+          }
           return base
         },
         valueFormatter: (p) => (p.value !== null && p.value !== undefined) ? String(p.value) : '',
         valueParser:    (p) => (p.newValue === '' || p.newValue === null) ? null : Number(p.newValue),
-      })),
+      }
+      }),
     }))
 
     return [...pinned, ...dateCols]

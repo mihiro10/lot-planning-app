@@ -3,13 +3,14 @@ import PlanningGrid from './components/PlanningGrid'
 import Sidebar from './components/Sidebar'
 import Setup from './components/Setup'
 import ProductPanel from './components/ProductPanel'
+import AddProductModal from './components/AddProductModal'
 import BulkStocktakeScreen from './components/BulkStocktakeScreen'
 import AnalysisDashboard from './components/AnalysisDashboard'
 import WorkerView from './components/WorkerView'
 import {
   getGrid, getRowTypes, createRowType, reorderRowTypes, connectWebSocket,
   getCellFlags, setCellFlag, clearCellFlag, getLotLinks, createLotLink, deleteLotLink,
-  getCanceledCells, cancelCell, uncancelCell,
+  getCanceledCells, cancelCell, uncancelCell, createProduct,
 } from './api'
 
 const s = {
@@ -43,6 +44,7 @@ export default function App() {
   const [error, setError]                 = useState(null)
   const [liveStatus, setLiveStatus]       = useState('接続中...')
   const [selectedProduct, setSelectedProduct] = useState(null)
+  const [showAddProduct, setShowAddProduct] = useState(false)
   const [productRowOverrides, setProductRowOverrides] = useState({})
   const [cellFlags, setCellFlags]         = useState({})   // key -> flag
   const [lotLinks, setLotLinks]           = useState([])
@@ -94,23 +96,32 @@ export default function App() {
 
   useEffect(() => { loadGrid(range) }, [])  // eslint-disable-line
 
+  // Merges recomputed (product_id, row_type_id, date, value) cells into
+  // gridData — shared by both the WS broadcast (other people's edits) and
+  // the direct HTTP response to your own edit (see onCellUpdated below),
+  // so calculated cells like 入庫予定数/最終 don't depend solely on the
+  // WebSocket round-trip to appear.
+  const applyUpdates = useCallback((updates) => {
+    setGridData(prev => {
+      if (!prev) return prev
+      const inWindow = new Set(prev.dates)
+      const next = { ...prev, products: prev.products.map(p => ({ ...p, values: { ...p.values } })) }
+      for (const upd of updates) {
+        if (!inWindow.has(upd.date)) continue  // recompute spans full history; only keep what's in view
+        const product = next.products.find(p => p.id === upd.product_id)
+        if (!product) continue
+        const key = String(upd.row_type_id)
+        product.values[key] = { ...(product.values[key] || {}), [upd.date]: upd.value }
+      }
+      return next
+    })
+  }, [])
+
   // WebSocket real-time updates — shared across everyone editing, not a private diff
   useEffect(() => {
     const ws = connectWebSocket((msg) => {
       if (msg.type === 'cell_updates') {
-        setGridData(prev => {
-          if (!prev) return prev
-          const inWindow = new Set(prev.dates)
-          const next = { ...prev, products: prev.products.map(p => ({ ...p, values: { ...p.values } })) }
-          for (const upd of msg.updates) {
-            if (!inWindow.has(upd.date)) continue  // recompute spans full history; only keep what's in view
-            const product = next.products.find(p => p.id === upd.product_id)
-            if (!product) continue
-            const key = String(upd.row_type_id)
-            product.values[key] = { ...(product.values[key] || {}), [upd.date]: upd.value }
-          }
-          return next
-        })
+        applyUpdates(msg.updates)
       } else if (msg.type === 'cell_flag_set') {
         const f = msg.flag
         setCellFlags(prev => ({ ...prev, [flagKey(f.product_id, f.row_type_id, f.date)]: f }))
@@ -136,14 +147,19 @@ export default function App() {
           return next
         })
       }
+    }, {
+      onOpen:  () => setLiveStatus('ライブ同期中'),
+      onClose: () => setLiveStatus('再接続中...'),
     })
     wsRef.current = ws
-    ws.onopen  = () => setLiveStatus('ライブ同期中')
-    ws.onclose = () => setLiveStatus('接続切れ')
     return () => ws.close()
-  }, [])
+  }, [applyUpdates])
 
-  const onCellUpdated = useCallback(() => {}, [])
+  // Apply your own edit's result immediately rather than waiting for the WS
+  // broadcast to round-trip back to you — the WS still handles the same
+  // update reaching everyone else, and re-applying it here a second time is
+  // harmless (same values, keyed merge).
+  const onCellUpdated = applyUpdates
 
   const onToggleRowType = useCallback((id) => {
     setVisible(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
@@ -158,6 +174,12 @@ export default function App() {
     const rts = await getRowTypes()
     setRowTypes(rts)
     setVisible(prev => [...prev, rts[rts.length - 1].id])
+    await loadGrid()
+  }, [loadGrid])
+
+  const onAddProduct = useCallback(async (body) => {
+    await createProduct(body)
+    setShowAddProduct(false)
     await loadGrid()
   }, [loadGrid])
 
@@ -263,6 +285,13 @@ export default function App() {
         />
       )}
 
+      {showAddProduct && (
+        <AddProductModal
+          onClose={() => setShowAddProduct(false)}
+          onCreate={onAddProduct}
+        />
+      )}
+
       <div style={s.body}>
         <Sidebar
           rowTypes={rowTypes}
@@ -271,6 +300,7 @@ export default function App() {
           filters={filters}
           onFilterChange={onFilterChange}
           onAddRowType={onAddRowType}
+          onOpenAddProduct={() => setShowAddProduct(true)}
           onReorder={onReorder}
         />
         <div style={s.main}>

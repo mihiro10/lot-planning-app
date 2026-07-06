@@ -44,6 +44,12 @@ export default function PlanningGrid({
   const [linkPopover, setLinkPopover] = useState(null) // {x,y,link}
   const [overlayTick, setOverlayTick] = useState(0)
 
+  // Excel-style fill handle: drag the small square at a focused editable
+  // cell's corner across the same row to repeat its value into every date
+  // cell in between (e.g. copy one day's 使用予測 across the next 10 days).
+  const [focusedDateCell, setFocusedDateCell] = useState(null)  // {productId,rowTypeId,rowIndex,date,value}
+  const [fillDrag, setFillDrag] = useState(null)  // {rowIndex,startDate,currentDate,value}
+
   // Build flat row array with rowSpan metadata
   const rowData = useMemo(() => {
     if (!products || !row_types) return []
@@ -122,6 +128,21 @@ export default function PlanningGrid({
       onToggleCancel?.(p.data._productId, p.data._rowTypeId, date)
     }
   }, [flagMode, linkMode, cancelMode, pendingSource, openFlagPopover, onToggleCancel])
+
+  const onCellFocused = useCallback((params) => {
+    if (flagMode || linkMode || cancelMode) { setFocusedDateCell(null); return }
+    const colId = params.column?.getColId?.()
+    if (!colId?.match(/^\d{4}-\d{2}-\d{2}$/) || params.rowIndex == null) { setFocusedDateCell(null); return }
+    const data = params.api.getDisplayedRowAtIndex(params.rowIndex)?.data
+    if (!data || !EDITABLE_ROLES.has(data._role)) { setFocusedDateCell(null); return }
+    setFocusedDateCell({
+      productId:  data._productId,
+      rowTypeId:  data._rowTypeId,
+      rowIndex:   params.rowIndex,
+      date:       colId,
+      value:      data[colId] ?? null,
+    })
+  }, [flagMode, linkMode, cancelMode])
 
   const columnDefs = useMemo(() => {
     if (!dates) return []
@@ -328,8 +349,32 @@ export default function PlanningGrid({
       setTimeout(() => setPasteStatus(null), 3000)
     }
 
+    // Copy: ag-Grid Community has no clipboard module either, so Ctrl+C on a
+    // focused (but not currently-editing) cell otherwise does nothing. Put
+    // the cell's raw value on the system clipboard so it can be pasted back
+    // into the grid (single cell, or as the source for the paste-fills-a-
+    // block behavior above) or into Excel.
+    const onCopy = (e) => {
+      const api = gridRef.current?.api
+      if (!api) return
+      if (api.getEditingCells().length > 0) return  // let native text-selection copy happen
+      const focused = api.getFocusedCell()
+      if (!focused) return
+      const colId = focused.column.getColId()
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(colId)) return
+      const rowNode = api.getDisplayedRowAtIndex(focused.rowIndex)
+      if (!rowNode) return
+      const value = rowNode.data[colId]
+      e.clipboardData.setData('text/plain', value === null || value === undefined ? '' : String(value))
+      e.preventDefault()
+    }
+
     el.addEventListener('paste', onPaste)
-    return () => el.removeEventListener('paste', onPaste)
+    el.addEventListener('copy', onCopy)
+    return () => {
+      el.removeEventListener('paste', onPaste)
+      el.removeEventListener('copy', onCopy)
+    }
   }, [])
 
   const defaultColDef = useMemo(() => ({
@@ -386,6 +431,122 @@ export default function PlanningGrid({
     }
   }, [rowIndexOf])
 
+  const getCellRect = useCallback((rowIndex, colId) => {
+    if (!containerRef.current) return null
+    const cell = containerRef.current.querySelector(
+      `.ag-center-cols-container [row-index="${rowIndex}"] [col-id="${colId}"]`
+    )
+    if (!cell) return null
+    const cellRect = cell.getBoundingClientRect()
+    const containerRect = containerRef.current.getBoundingClientRect()
+    return {
+      left:   cellRect.left - containerRect.left,
+      top:    cellRect.top - containerRect.top,
+      width:  cellRect.width,
+      height: cellRect.height,
+    }
+  }, [])
+
+  // eslint-disable-next-line no-unused-expressions
+  overlayTick  // recompute handle/overlay position on scroll, same trigger as the link arrows
+
+  const handleRect = useMemo(() => {
+    if (!focusedDateCell || fillDrag) return null
+    return getCellRect(focusedDateCell.rowIndex, focusedDateCell.date)
+  }, [focusedDateCell, fillDrag, getCellRect, overlayTick])
+
+  const fillDragRect = useMemo(() => {
+    if (!fillDrag) return null
+    const startIdx = dates.indexOf(fillDrag.startDate)
+    const curIdx   = dates.indexOf(fillDrag.currentDate)
+    if (startIdx === -1 || curIdx === -1) return null
+    const lo = dates[Math.min(startIdx, curIdx)]
+    const hi = dates[Math.max(startIdx, curIdx)]
+    const loRect = getCellRect(fillDrag.rowIndex, lo)
+    const hiRect = getCellRect(fillDrag.rowIndex, hi)
+    if (!loRect || !hiRect) return null
+    return {
+      left:   loRect.left,
+      top:    loRect.top,
+      width:  (hiRect.left + hiRect.width) - loRect.left,
+      height: loRect.height,
+    }
+  }, [fillDrag, dates, getCellRect, overlayTick])
+
+  // Mutable drag state read/written by the window listeners below — kept in
+  // a ref (not just React state) so the listeners attach exactly once per
+  // drag (mousedown to mouseup) instead of being torn down and rebuilt on
+  // every intermediate mousemove, which is how many cells the drag crosses.
+  const dragRef = useRef(null)
+  const [isDragging, setIsDragging] = useState(false)
+
+  const onFillHandleMouseDown = useCallback((e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!focusedDateCell) return
+    // Re-read the live value in case the user just typed into this cell
+    // without moving focus away (onCellFocused wouldn't have refired).
+    const rowNode = gridRef.current?.api.getDisplayedRowAtIndex(focusedDateCell.rowIndex)
+    const liveValue = rowNode?.data?.[focusedDateCell.date] ?? focusedDateCell.value
+    const initial = { rowIndex: focusedDateCell.rowIndex, startDate: focusedDateCell.date, currentDate: focusedDateCell.date, value: liveValue }
+    dragRef.current = initial
+    setFillDrag(initial)
+    setIsDragging(true)
+  }, [focusedDateCell])
+
+  useEffect(() => {
+    if (!isDragging) return
+
+    const onMouseMove = (e) => {
+      const drag = dragRef.current
+      if (!drag) return
+      const el = document.elementFromPoint(e.clientX, e.clientY)
+      const cell = el?.closest('[col-id]')
+      const colId = cell?.getAttribute('col-id')
+      const rowEl = el?.closest('[row-index]')
+      const rowIndex = rowEl ? Number(rowEl.getAttribute('row-index')) : null
+      if (rowIndex !== drag.rowIndex) return  // only allow filling within the same row
+      if (!colId?.match(/^\d{4}-\d{2}-\d{2}$/)) return
+      if (drag.currentDate === colId) return
+      dragRef.current = { ...drag, currentDate: colId }
+      setFillDrag(dragRef.current)
+    }
+
+    const onMouseUp = async () => {
+      const drag = dragRef.current
+      dragRef.current = null
+      setIsDragging(false)
+      setFillDrag(null)
+      if (!drag) return
+      const startIdx = dates.indexOf(drag.startDate)
+      const curIdx   = dates.indexOf(drag.currentDate)
+      if (startIdx === -1 || curIdx === -1 || startIdx === curIdx) return
+      const lo = Math.min(startIdx, curIdx)
+      const hi = Math.max(startIdx, curIdx)
+      const rowNode = gridRef.current?.api.getDisplayedRowAtIndex(drag.rowIndex)
+      if (!rowNode) return
+      const updates = dates.slice(lo, hi + 1).map(d => ({
+        product_id:  rowNode.data._productId,
+        row_type_id: rowNode.data._rowTypeId,
+        date:        d,
+        value:       drag.value,
+      }))
+      try {
+        const result = await updateValuesBatch(updates)
+        onCellUpdated(result.updates)
+      } catch (err) {
+        console.error('Fill failed', err)
+      }
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [isDragging, dates, onCellUpdated])
+
   const linkPaths = useMemo(() => {
     // eslint-disable-next-line no-unused-expressions
     overlayTick
@@ -408,6 +569,7 @@ export default function PlanningGrid({
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
           onCellValueChanged={onCellValueChanged}
+          onCellFocused={onCellFocused}
           onBodyScroll={recomputeOverlay}
           onGridSizeChanged={recomputeOverlay}
           onFirstDataRendered={onFirstDataRendered}
@@ -444,6 +606,30 @@ export default function PlanningGrid({
           </g>
         ))}
       </svg>
+
+      {fillDragRect && (
+        <div style={{
+          position: 'absolute', zIndex: 6, pointerEvents: 'none',
+          left: fillDragRect.left, top: fillDragRect.top,
+          width: fillDragRect.width, height: fillDragRect.height,
+          border: '2px solid #1565C0', background: 'rgba(21,101,192,0.08)',
+        }} />
+      )}
+
+      {handleRect && !flagMode && !linkMode && !cancelMode && (
+        <div
+          onMouseDown={onFillHandleMouseDown}
+          title="ドラッグしてこの値を右または左のセルにコピー"
+          style={{
+            position: 'absolute', zIndex: 7,
+            left: handleRect.left + handleRect.width - 5,
+            top: handleRect.top + handleRect.height - 5,
+            width: 8, height: 8,
+            background: '#1565C0', border: '1px solid #fff',
+            cursor: 'crosshair',
+          }}
+        />
+      )}
 
       {linkMode && pendingSource && (
         <div style={{ position: 'absolute', top: 8, left: 8, background: '#1565C0', color: '#fff',

@@ -11,7 +11,7 @@ const s = {
 }
 
 export default function Sidebar({ rowTypes, visibleRowTypes, onToggleRowType,
-                                   filters, onFilterChange, onAddRowType, onReorder }) {
+                                   filters, onFilterChange, onAddRowType, onReorder, onOpenAddProduct }) {
   const [newRowName, setNewRowName] = useState('')
   const [newRowRole, setNewRowRole] = useState('demand_actual')
   const dragId = useRef(null)
@@ -68,6 +68,13 @@ export default function Sidebar({ rowTypes, visibleRowTypes, onToggleRowType,
             </label>
           </div>
         ))}
+      </div>
+
+      {/* Add product */}
+      <div style={s.section}>
+        <button style={{ ...s.btn, background: '#1976D2', color: '#fff' }} onClick={onOpenAddProduct}>
+          ＋ 品目を追加
+        </button>
       </div>
 
       {/* Add custom row */}

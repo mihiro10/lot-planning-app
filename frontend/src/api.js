@@ -15,8 +15,6 @@ export const updateProduct  = (id, body)     => api.patch(`/products/${id}`, bod
 export const deleteProduct  = (id)           => api.delete(`/products/${id}`)
 export const updateValue    = (body)         => api.put('/values', body).then(r => r.data)
 export const updateValuesBatch = (updates)   => api.put('/values/batch', { updates }).then(r => r.data)
-export const updateInventory = (monthId, productId, body) =>
-  api.patch(`/months/${monthId}/inventory/${productId}`, body)
 
 export const getProductAttributes = (productId)           => api.get(`/products/${productId}/attributes`).then(r => r.data)
 export const createAttribute      = (body)                => api.post('/attributes', body).then(r => r.data)
@@ -46,10 +44,34 @@ export const applyStocktakeBatch = (body) => api.post('/stocktake/batch', body).
 // Inventory reduction analysis dashboard
 export const getAnalysis    = (start, end)    => api.get('/analysis', { params: { start, end } }).then(r => r.data)
 
-export function connectWebSocket(onMessage) {
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  const ws = new WebSocket(`${proto}://${window.location.host}/ws`)
-  ws.onmessage = (e) => onMessage(JSON.parse(e.data))
-  ws.onerror   = console.error
-  return ws
+// Auto-reconnects with backoff — every computed cell (入庫予定数, 最終, etc.)
+// only ever updates via this connection, so a dropped socket that never
+// reconnects silently freezes all calculated values until a manual reload.
+export function connectWebSocket(onMessage, { onOpen, onClose } = {}) {
+  let socket = null
+  let closedByCaller = false
+  let retryDelay = 1000
+
+  function open() {
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+    socket = new WebSocket(`${proto}://${window.location.host}/ws`)
+    socket.onmessage = (e) => onMessage(JSON.parse(e.data))
+    socket.onerror = () => {}  // onclose fires right after; avoid duplicate noise
+    socket.onopen = () => {
+      retryDelay = 1000
+      onOpen?.()
+    }
+    socket.onclose = () => {
+      onClose?.()
+      if (closedByCaller) return
+      setTimeout(open, retryDelay)
+      retryDelay = Math.min(retryDelay * 2, 15000)
+    }
+  }
+
+  open()
+
+  return {
+    close: () => { closedByCaller = true; socket?.close() },
+  }
 }

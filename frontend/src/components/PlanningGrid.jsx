@@ -27,6 +27,7 @@ const LINK_TYPES = [
 const LINK_COLOR = Object.fromEntries(LINK_TYPES.map(t => [t.id, t.color]))
 
 function flagKey(productId, rowTypeId, date) { return `${productId}:${rowTypeId}:${date}` }
+function todayISO() { return new Date().toISOString().slice(0, 10) }
 
 export default function PlanningGrid({
   gridData, visibleRowTypes, productRowOverrides = {}, cellFlags = {}, lotLinks = [], canceledCells = {},
@@ -343,6 +344,15 @@ export default function PlanningGrid({
     return () => window.removeEventListener('resize', handle)
   }, [recomputeOverlay])
 
+  // On the grid's very first render, scroll so today's column is on-screen
+  // instead of leaving it ~60 columns off to the right of the initial view.
+  // Must scroll before recomputeOverlay's edge-check runs, or the still-at-0
+  // scrollLeft reads as "near start" and triggers an unwanted range extend.
+  const onFirstDataRendered = useCallback((params) => {
+    params.api.ensureColumnVisible(todayISO(), 'middle')
+    recomputeOverlay()
+  }, [recomputeOverlay])
+
   const getCellCenter = useCallback((productId, rowTypeId, date) => {
     if (!containerRef.current) return null
     const idx = rowIndexOf(productId, rowTypeId)
@@ -383,7 +393,7 @@ export default function PlanningGrid({
           onCellValueChanged={onCellValueChanged}
           onBodyScroll={recomputeOverlay}
           onGridSizeChanged={recomputeOverlay}
-          onFirstDataRendered={recomputeOverlay}
+          onFirstDataRendered={onFirstDataRendered}
           suppressRowTransform
           rowHeight={24}
           headerHeight={26}

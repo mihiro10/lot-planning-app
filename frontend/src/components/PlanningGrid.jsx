@@ -340,7 +340,8 @@ export default function PlanningGrid({
         return
       }
       try {
-        await updateValuesBatch(updates)
+        const result = await updateValuesBatch(updates)
+        onCellUpdated(result.updates)
         setPasteStatus({ n: updates.length })
       } catch (err) {
         console.error('Paste failed', err)
@@ -375,7 +376,7 @@ export default function PlanningGrid({
       el.removeEventListener('paste', onPaste)
       el.removeEventListener('copy', onCopy)
     }
-  }, [])
+  }, [onCellUpdated])
 
   const defaultColDef = useMemo(() => ({
     sortable: false,

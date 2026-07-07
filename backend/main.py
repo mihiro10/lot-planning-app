@@ -175,7 +175,7 @@ def _build_continuous_grid(con, start_date: str, end_date: str) -> dict:
 
     products = [dict(r) for r in con.execute(
         "SELECT id, code, name, planner, mfg_location, category, storage, mfg_name,"
-        " lot_size, lot_unit, min_stock, max_stock, lead_time, notes "
+        " lot_size, lot_unit, min_stock, max_stock, lead_time, notes, status "
         "FROM products WHERE is_active=1 ORDER BY display_order, id"
     ).fetchall()]
     for p in products:
@@ -292,6 +292,7 @@ class ProductCreate(BaseModel):
     max_stock: float = 0
     lead_time: int = 0
     notes: Optional[str] = None
+    status: str = "使用中"
 
 
 class ProductUpdate(ProductCreate):
@@ -325,10 +326,10 @@ def create_product(body: ProductCreate):
     with get_db() as con:
         cur = con.execute(
             "INSERT INTO products(code,name,planner,mfg_location,category,storage,mfg_name,"
-            "lot_size,lot_unit,min_stock,max_stock,lead_time,notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "lot_size,lot_unit,min_stock,max_stock,lead_time,notes,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (body.code, body.name, _serialize_json_list(body.planner), _serialize_json_list(body.mfg_location), body.category,
              body.storage, body.mfg_name, body.lot_size, body.lot_unit,
-             body.min_stock, body.max_stock, body.lead_time, body.notes),
+             body.min_stock, body.max_stock, body.lead_time, body.notes, body.status),
         )
         return {"id": cur.lastrowid}
 

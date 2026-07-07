@@ -5,6 +5,7 @@ import Setup from './components/Setup'
 import ProductPanel from './components/ProductPanel'
 import AddProductModal from './components/AddProductModal'
 import BulkStocktakeScreen from './components/BulkStocktakeScreen'
+import BulkEntryScreen from './components/BulkEntryScreen'
 import AnalysisDashboard from './components/AnalysisDashboard'
 import WorkerView from './components/WorkerView'
 import {
@@ -55,6 +56,7 @@ export default function App() {
   const [showAnalysis, setShowAnalysis]   = useState(false)
   const [showBulkStocktake, setShowBulkStocktake] = useState(false)
   const [showWorkerView, setShowWorkerView] = useState(false)
+  const [showBulkEntry, setShowBulkEntry] = useState(false)
   const [editorName, setEditorName]       = useState(() => localStorage.getItem('lot_planning_editor_name') || '')
   const wsRef = useRef(null)
 
@@ -266,9 +268,10 @@ export default function App() {
         <button style={cancelMode ? s.btnActive : s.btn} onClick={() => { setCancelMode(v => !v); setFlagMode(false); setLinkMode(false) }}>
           ✕ 取り消し
         </button>
-        <button style={showBulkStocktake ? s.btnActive : s.btn} onClick={() => { setShowBulkStocktake(v => !v); setShowAnalysis(false); setShowWorkerView(false) }}>月次棚卸し</button>
-        <button style={showAnalysis ? s.btnActive : s.btn} onClick={() => { setShowAnalysis(v => !v); setShowBulkStocktake(false); setShowWorkerView(false) }}>在庫分析</button>
-        <button style={showWorkerView ? s.btnActive : s.btn} onClick={() => { setShowWorkerView(v => !v); setShowAnalysis(false); setShowBulkStocktake(false) }}>現場ビュー</button>
+        <button style={showBulkEntry ? s.btnActive : s.btn} onClick={() => { setShowBulkEntry(v => !v); setShowBulkStocktake(false); setShowAnalysis(false); setShowWorkerView(false) }}>一括入力</button>
+        <button style={showBulkStocktake ? s.btnActive : s.btn} onClick={() => { setShowBulkStocktake(v => !v); setShowBulkEntry(false); setShowAnalysis(false); setShowWorkerView(false) }}>月次棚卸し</button>
+        <button style={showAnalysis ? s.btnActive : s.btn} onClick={() => { setShowAnalysis(v => !v); setShowBulkEntry(false); setShowBulkStocktake(false); setShowWorkerView(false) }}>在庫分析</button>
+        <button style={showWorkerView ? s.btnActive : s.btn} onClick={() => { setShowWorkerView(v => !v); setShowBulkEntry(false); setShowAnalysis(false); setShowBulkStocktake(false) }}>現場ビュー</button>
 
         <span style={{ marginLeft: 'auto', ...s.status }}>● {liveStatus}</span>
       </div>
@@ -306,6 +309,8 @@ export default function App() {
         <div style={s.main}>
           {showAnalysis ? (
             <AnalysisDashboard defaultRange={range} />
+          ) : showBulkEntry ? (
+            <BulkEntryScreen products={gridData?.products || []} rowTypes={rowTypes} onApplied={loadGrid} />
           ) : showBulkStocktake ? (
             <BulkStocktakeScreen products={gridData?.products || []} editorName={editorName} />
           ) : showWorkerView ? (

@@ -14,7 +14,7 @@ const s = {
   btn:     { padding: '7px 16px', border: 'none', borderRadius: 5, cursor: 'pointer', fontSize: 13 },
 }
 
-const initial = { name: '', code: '', category: '', lot_size: 1, lead_time: 0, min_stock: 0, max_stock: 0 }
+const initial = { name: '', code: '', category: '', lot_size: 1, lead_time: 0, min_stock: 0, max_stock: 0, status: '使用中' }
 
 export default function AddProductModal({ onClose, onCreate }) {
   const [form, setForm] = useState(initial)
@@ -55,9 +55,19 @@ export default function AddProductModal({ onClose, onCreate }) {
           <input style={s.input} value={form.code} onChange={e => set('code', e.target.value)} />
         </div>
 
-        <div style={s.row}>
-          <label style={s.label}>分類</label>
-          <input style={s.input} value={form.category} onChange={e => set('category', e.target.value)} />
+        <div style={{ ...s.row, ...s.pair }}>
+          <div style={s.half}>
+            <label style={s.label}>分類</label>
+            <input style={s.input} value={form.category} onChange={e => set('category', e.target.value)} />
+          </div>
+          <div style={s.half}>
+            <label style={s.label}>状態</label>
+            <select style={s.input} value={form.status} onChange={e => set('status', e.target.value)}>
+              <option value="使用中">使用中</option>
+              <option value="保存中">保存中</option>
+              <option value="未使用">未使用</option>
+            </select>
+          </div>
         </div>
 
         <div style={{ ...s.row, ...s.pair }}>

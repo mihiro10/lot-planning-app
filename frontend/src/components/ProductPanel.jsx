@@ -54,6 +54,7 @@ export default function ProductPanel({ product, rowTypes = [], visibleRowTypes =
       min_stock:    product.min_stock    ?? 0,
       max_stock:    product.max_stock    ?? 0,
       notes:        product.notes        ?? '',
+      status:       product.status       ?? '使用中',
     })
     getProductAttributes(product.id).then(setCustomAttrs)
   }, [product])
@@ -179,6 +180,14 @@ export default function ProductPanel({ product, rowTypes = [], visibleRowTypes =
           {/* 基本情報 */}
           <div style={s.section}>
             <div style={s.sHead}>基本情報</div>
+            <div style={s.row}>
+              <span style={s.label}>状態</span>
+              <select style={s.input} value={form.status} onChange={e => set('status', e.target.value)}>
+                <option value="使用中">使用中</option>
+                <option value="保存中">保存中</option>
+                <option value="未使用">未使用</option>
+              </select>
+            </div>
             {[
               ['品目名',    'name',         'text'],
               ['コード',    'code',         'text'],

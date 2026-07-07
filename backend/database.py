@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS products (
     max_stock REAL DEFAULT 0,
     lead_time INTEGER DEFAULT 0,
     notes TEXT,
+    status TEXT DEFAULT '使用中',
     display_order INTEGER DEFAULT 0,
     is_active INTEGER DEFAULT 1
 );
@@ -131,6 +132,9 @@ def init_db():
     cols = {r[1] for r in con.execute("PRAGMA table_info(daily_values)").fetchall()}
     if "text_value" not in cols:
         con.execute("ALTER TABLE daily_values ADD COLUMN text_value TEXT")
+    product_cols = {r[1] for r in con.execute("PRAGMA table_info(products)").fetchall()}
+    if "status" not in product_cols:
+        con.execute("ALTER TABLE products ADD COLUMN status TEXT DEFAULT '使用中'")
     # product_month_inventory retired — 月初在庫数 now lives as a normal 調整
     # daily_values row (see _migrate_starting_inventory.py for the one-time backfill).
     con.execute("DROP TABLE IF EXISTS product_month_inventory")

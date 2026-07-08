@@ -417,12 +417,29 @@ class CellUpdate(BaseModel):
     row_type_id: int
     date: str
     value: Optional[float] = None
+    editor: Optional[str] = None
+
+
+def _log_change(con, product_id: int, row_type_id: int, date: str, old_value, new_value, editor: Optional[str]):
+    """Append-only record of a single write to daily_values, kept regardless
+    of what happens to the cell afterward — this is the only place "what did
+    this used to be, and who changed it" can still be answered from later."""
+    con.execute(
+        "INSERT INTO daily_value_changes(product_id, row_type_id, date, old_value, new_value, editor, changed_at)"
+        " VALUES (?,?,?,?,?,?,?)",
+        (product_id, row_type_id, date, old_value, new_value, editor, _now()),
+    )
 
 
 @app.put("/api/values")
 async def update_value(body: CellUpdate):
     with get_db() as con:
         month_id = _month_id_for_date(con, body.date)
+        old_row = con.execute(
+            "SELECT value FROM daily_values WHERE product_id=? AND row_type_id=? AND date=?",
+            (body.product_id, body.row_type_id, body.date),
+        ).fetchone()
+        old_value = old_row["value"] if old_row else None
         # Save raw value (None = clear)
         if body.value is None:
             con.execute(
@@ -435,6 +452,8 @@ async def update_value(body: CellUpdate):
                 " VALUES (?,?,?,?,?) ON CONFLICT(product_id,row_type_id,date) DO UPDATE SET value=excluded.value",
                 (body.product_id, body.row_type_id, month_id, body.date, body.value),
             )
+        if old_value != body.value:
+            _log_change(con, body.product_id, body.row_type_id, body.date, old_value, body.value, body.editor)
 
         # Recompute 最終 + 入庫予定数 across the product's whole continuous history
         updates = _recompute_product(con, body.product_id, through=body.date)
@@ -465,6 +484,11 @@ async def update_values_batch(body: CellUpdateBatch):
     with get_db() as con:
         for u in body.updates:
             month_id = _month_id_for_date(con, u.date)
+            old_row = con.execute(
+                "SELECT value FROM daily_values WHERE product_id=? AND row_type_id=? AND date=?",
+                (u.product_id, u.row_type_id, u.date),
+            ).fetchone()
+            old_value = old_row["value"] if old_row else None
             if u.value is None:
                 con.execute(
                     "DELETE FROM daily_values WHERE product_id=? AND row_type_id=? AND date=?",
@@ -476,6 +500,8 @@ async def update_values_batch(body: CellUpdateBatch):
                     " VALUES (?,?,?,?,?) ON CONFLICT(product_id,row_type_id,date) DO UPDATE SET value=excluded.value",
                     (u.product_id, u.row_type_id, month_id, u.date, u.value),
                 )
+            if old_value != u.value:
+                _log_change(con, u.product_id, u.row_type_id, u.date, old_value, u.value, u.editor)
             affected_products.add(u.product_id)
 
         all_updates = []
@@ -487,6 +513,36 @@ async def update_values_batch(body: CellUpdateBatch):
 
     await manager.broadcast({"type": "cell_updates", "updates": all_updates})
     return {"updates": all_updates}
+
+
+@app.get("/api/change-log")
+def list_change_log(start: str, end: str, q: Optional[str] = None, limit: int = 500):
+    """Every past write to daily_values (set or clear), newest first — for
+    tracking down 'did this value disappear, and who/when' during the early
+    weeks of real use. start/end filter on when the change was made, not
+    which date-cell it affected."""
+    with get_db() as con:
+        # changed_at is a full ISO8601 timestamp; comparing it directly
+        # against plain date strings (rather than wrapping it in substr())
+        # lets SQLite use the index on changed_at instead of scanning every
+        # row. ISO8601 sorts correctly as plain strings, so this is safe.
+        end_exclusive = (date.fromisoformat(end) + timedelta(days=1)).isoformat()
+        sql = (
+            "SELECT c.id, c.changed_at, c.editor, c.old_value, c.new_value, c.date,"
+            " p.name AS product_name, rt.name AS row_type_name"
+            " FROM daily_value_changes c"
+            " JOIN products p ON p.id = c.product_id"
+            " JOIN row_types rt ON rt.id = c.row_type_id"
+            " WHERE c.changed_at >= ? AND c.changed_at < ?"
+        )
+        params: list = [start, end_exclusive]
+        if q:
+            sql += " AND p.name LIKE ?"
+            params.append(f"%{q}%")
+        sql += " ORDER BY c.changed_at DESC LIMIT ?"
+        params.append(limit)
+        rows = con.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
 
 
 # ── 備考 notes (per-date, free text — not part of the numeric formula) ────────

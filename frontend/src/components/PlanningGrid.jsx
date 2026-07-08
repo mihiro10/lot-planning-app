@@ -31,6 +31,7 @@ function todayISO() { return new Date().toISOString().slice(0, 10) }
 
 export default function PlanningGrid({
   gridData, visibleRowTypes, productRowOverrides = {}, cellFlags = {}, lotLinks = [], canceledCells = {},
+  editMode = false, editorName = '',
   flagMode = false, linkMode = false, cancelMode = false,
   onCellUpdated, onProductClick, onSetFlag, onClearFlag, onCreateLink, onDeleteLink, onToggleCancel, onExtendRange,
 }) {
@@ -130,7 +131,8 @@ export default function PlanningGrid({
   }, [flagMode, linkMode, cancelMode, pendingSource, openFlagPopover, onToggleCancel])
 
   const onCellFocused = useCallback((params) => {
-    if (flagMode || linkMode || cancelMode) { setFocusedDateCell(null); return }
+    // No fill handle in view-only — nothing to drag-fill if you can't edit.
+    if (!editMode || flagMode || linkMode || cancelMode) { setFocusedDateCell(null); return }
     const colId = params.column?.getColId?.()
     if (!colId?.match(/^\d{4}-\d{2}-\d{2}$/) || params.rowIndex == null) { setFocusedDateCell(null); return }
     const data = params.api.getDisplayedRowAtIndex(params.rowIndex)?.data
@@ -142,7 +144,7 @@ export default function PlanningGrid({
       date:       colId,
       value:      data[colId] ?? null,
     })
-  }, [flagMode, linkMode, cancelMode])
+  }, [editMode, flagMode, linkMode, cancelMode])
 
   const columnDefs = useMemo(() => {
     if (!dates) return []
@@ -210,7 +212,7 @@ export default function PlanningGrid({
         headerName: String(day),
         width: 56,
         headerClass: isToday ? 'date-is-today' : `date-band-${band}`,
-        editable: (p) => !flagMode && !linkMode && !cancelMode && EDITABLE_ROLES.has(p.data._role),
+        editable: (p) => editMode && !flagMode && !linkMode && !cancelMode && EDITABLE_ROLES.has(p.data._role),
         onCellClicked: onDateCellClicked,
         tooltipValueGetter: (p) => {
           const flag = cellFlags[flagKey(p.data._productId, p.data._rowTypeId, iso)]
@@ -270,9 +272,10 @@ export default function PlanningGrid({
     }))
 
     return [...pinned, ...dateCols]
-  }, [dates, flagMode, linkMode, cancelMode, cellFlags, canceledCells, pendingSource, onDateCellClicked, onProductClick, products])
+  }, [dates, editMode, flagMode, linkMode, cancelMode, cellFlags, canceledCells, pendingSource, onDateCellClicked, onProductClick, products])
 
   const onCellValueChanged = useCallback(async (event) => {
+    if (!editMode) return  // belt-and-suspenders — `editable` already blocks this in view-only
     const { data, colDef, newValue } = event
     const dateKey = colDef.field
     if (!dateKey?.match(/^\d{4}-\d{2}-\d{2}$/)) return
@@ -282,12 +285,13 @@ export default function PlanningGrid({
         row_type_id: data._rowTypeId,
         date:        dateKey,
         value:       newValue === '' ? null : newValue,
+        editor:      editorName || null,
       })
       onCellUpdated(result.updates)
     } catch (e) {
       console.error('Save failed', e)
     }
-  }, [onCellUpdated])
+  }, [onCellUpdated, editMode, editorName])
 
   // Excel-style paste: no ag-Grid range selection (that's an Enterprise-only
   // module), so this pastes relative to whatever cell is currently focused —
@@ -299,6 +303,7 @@ export default function PlanningGrid({
     if (!el) return
 
     const onPaste = async (e) => {
+      if (!editMode) return  // view-only: no pasting values in
       const api = gridRef.current?.api
       if (!api) return
       if (api.getEditingCells().length > 0) return  // let native single-cell paste happen
@@ -330,7 +335,7 @@ export default function PlanningGrid({
           if (raw === '') continue
           const num = Number(raw)
           if (Number.isNaN(num)) continue
-          updates.push({ product_id: rowNode.data._productId, row_type_id: rowNode.data._rowTypeId, date: colId, value: num })
+          updates.push({ product_id: rowNode.data._productId, row_type_id: rowNode.data._rowTypeId, date: colId, value: num, editor: editorName || null })
         }
       }
 
@@ -376,7 +381,7 @@ export default function PlanningGrid({
       el.removeEventListener('paste', onPaste)
       el.removeEventListener('copy', onCopy)
     }
-  }, [onCellUpdated])
+  }, [onCellUpdated, editMode, editorName])
 
   const defaultColDef = useMemo(() => ({
     sortable: false,
@@ -531,6 +536,7 @@ export default function PlanningGrid({
         row_type_id: rowNode.data._rowTypeId,
         date:        d,
         value:       drag.value,
+        editor:      editorName || null,
       }))
       try {
         const result = await updateValuesBatch(updates)
@@ -546,7 +552,7 @@ export default function PlanningGrid({
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
     }
-  }, [isDragging, dates, onCellUpdated])
+  }, [isDragging, dates, onCellUpdated, editorName])
 
   const linkPaths = useMemo(() => {
     // eslint-disable-next-line no-unused-expressions

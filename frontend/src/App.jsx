@@ -8,6 +8,7 @@ import BulkStocktakeScreen from './components/BulkStocktakeScreen'
 import BulkEntryScreen from './components/BulkEntryScreen'
 import AnalysisDashboard from './components/AnalysisDashboard'
 import WorkerView from './components/WorkerView'
+import ChangeLogScreen from './components/ChangeLogScreen'
 import {
   getGrid, getRowTypes, createRowType, reorderRowTypes, connectWebSocket,
   getCellFlags, setCellFlag, clearCellFlag, getLotLinks, createLotLink, deleteLotLink,
@@ -57,7 +58,13 @@ export default function App() {
   const [showBulkStocktake, setShowBulkStocktake] = useState(false)
   const [showWorkerView, setShowWorkerView] = useState(false)
   const [showBulkEntry, setShowBulkEntry] = useState(false)
+  const [showChangeLog, setShowChangeLog] = useState(false)
   const [editorName, setEditorName]       = useState(() => localStorage.getItem('lot_planning_editor_name') || '')
+  // Always starts view-only on load/refresh — deliberately not persisted, so
+  // an accidental refresh (or leaving the tab open overnight) never leaves
+  // the grid silently editable. Switching in requires a name so every write
+  // to daily_values can be attributed (see the 変更履歴 screen).
+  const [editMode, setEditMode]           = useState(false)
   const wsRef = useRef(null)
 
   useEffect(() => {
@@ -167,6 +174,25 @@ export default function App() {
     setVisible(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   }, [])
 
+  // Switching into edit mode requires a name — every daily_values write now
+  // records who made it (see cellEdits), and an anonymous edit defeats that.
+  // Turning edit mode back off needs no such check, but does drop out of
+  // whatever flag/link/cancel mode was active, since those are edit actions too.
+  const onToggleEditMode = useCallback(() => {
+    if (editMode) {
+      setEditMode(false)
+      setFlagMode(false)
+      setLinkMode(false)
+      setCancelMode(false)
+      return
+    }
+    if (!editorName.trim()) {
+      alert('編集モードにするには「あなたの名前」を入力してください')
+      return
+    }
+    setEditMode(true)
+  }, [editMode, editorName])
+
   const onFilterChange = useCallback((change) => {
     setFilters(prev => ({ ...prev, ...change }))
   }, [])
@@ -259,19 +285,28 @@ export default function App() {
         <input style={s.nameInput} placeholder="あなたの名前" value={editorName}
           onChange={e => setEditorName(e.target.value)} title="編集の記名に使われます" />
 
-        <button style={flagMode ? s.btnActive : s.btn} onClick={() => { setFlagMode(v => !v); setLinkMode(false); setCancelMode(false) }}>
+        <button
+          style={editMode ? { ...s.btnActive, background: '#fff', color: '#1565C0' } : { ...s.btn, fontWeight: 700 }}
+          onClick={onToggleEditMode}
+          title={editMode ? 'クリックで閲覧専用に戻します' : 'クリックで編集モードにします（名前が必要です）'}
+        >
+          {editMode ? '✏️ 編集モード' : '👁 閲覧専用'}
+        </button>
+
+        <button disabled={!editMode} style={flagMode ? s.btnActive : { ...s.btn, opacity: editMode ? 1 : .45, cursor: editMode ? 'pointer' : 'not-allowed' }} onClick={() => { setFlagMode(v => !v); setLinkMode(false); setCancelMode(false) }}>
           🎨 変更ハイライト
         </button>
-        <button style={linkMode ? s.btnActive : s.btn} onClick={() => { setLinkMode(v => !v); setFlagMode(false); setCancelMode(false) }}>
+        <button disabled={!editMode} style={linkMode ? s.btnActive : { ...s.btn, opacity: editMode ? 1 : .45, cursor: editMode ? 'pointer' : 'not-allowed' }} onClick={() => { setLinkMode(v => !v); setFlagMode(false); setCancelMode(false) }}>
           ↗ リンク作成
         </button>
-        <button style={cancelMode ? s.btnActive : s.btn} onClick={() => { setCancelMode(v => !v); setFlagMode(false); setLinkMode(false) }}>
+        <button disabled={!editMode} style={cancelMode ? s.btnActive : { ...s.btn, opacity: editMode ? 1 : .45, cursor: editMode ? 'pointer' : 'not-allowed' }} onClick={() => { setCancelMode(v => !v); setFlagMode(false); setLinkMode(false) }}>
           ✕ 取り消し
         </button>
-        <button style={showBulkEntry ? s.btnActive : s.btn} onClick={() => { setShowBulkEntry(v => !v); setShowBulkStocktake(false); setShowAnalysis(false); setShowWorkerView(false) }}>一括入力</button>
-        <button style={showBulkStocktake ? s.btnActive : s.btn} onClick={() => { setShowBulkStocktake(v => !v); setShowBulkEntry(false); setShowAnalysis(false); setShowWorkerView(false) }}>月次棚卸し</button>
-        <button style={showAnalysis ? s.btnActive : s.btn} onClick={() => { setShowAnalysis(v => !v); setShowBulkEntry(false); setShowBulkStocktake(false); setShowWorkerView(false) }}>在庫分析</button>
-        <button style={showWorkerView ? s.btnActive : s.btn} onClick={() => { setShowWorkerView(v => !v); setShowBulkEntry(false); setShowAnalysis(false); setShowBulkStocktake(false) }}>現場ビュー</button>
+        <button style={showBulkEntry ? s.btnActive : s.btn} onClick={() => { setShowBulkEntry(v => !v); setShowBulkStocktake(false); setShowAnalysis(false); setShowWorkerView(false); setShowChangeLog(false) }}>一括入力</button>
+        <button style={showBulkStocktake ? s.btnActive : s.btn} onClick={() => { setShowBulkStocktake(v => !v); setShowBulkEntry(false); setShowAnalysis(false); setShowWorkerView(false); setShowChangeLog(false) }}>月次棚卸し</button>
+        <button style={showAnalysis ? s.btnActive : s.btn} onClick={() => { setShowAnalysis(v => !v); setShowBulkEntry(false); setShowBulkStocktake(false); setShowWorkerView(false); setShowChangeLog(false) }}>在庫分析</button>
+        <button style={showWorkerView ? s.btnActive : s.btn} onClick={() => { setShowWorkerView(v => !v); setShowBulkEntry(false); setShowAnalysis(false); setShowBulkStocktake(false); setShowChangeLog(false) }}>現場ビュー</button>
+        <button style={showChangeLog ? s.btnActive : s.btn} onClick={() => { setShowChangeLog(v => !v); setShowBulkEntry(false); setShowAnalysis(false); setShowBulkStocktake(false); setShowWorkerView(false) }}>変更履歴</button>
 
         <span style={{ marginLeft: 'auto', ...s.status }}>● {liveStatus}</span>
       </div>
@@ -315,6 +350,8 @@ export default function App() {
             <BulkStocktakeScreen products={gridData?.products || []} editorName={editorName} />
           ) : showWorkerView ? (
             gridData && <WorkerView gridData={gridData} cellFlags={cellFlags} canceledCells={canceledCells} />
+          ) : showChangeLog ? (
+            <ChangeLogScreen defaultRange={range} />
           ) : filteredGridData && (
             <PlanningGrid
               gridData={filteredGridData}
@@ -323,6 +360,8 @@ export default function App() {
               cellFlags={cellFlags}
               lotLinks={lotLinks}
               canceledCells={canceledCells}
+              editMode={editMode}
+              editorName={editorName}
               flagMode={flagMode}
               linkMode={linkMode}
               cancelMode={cancelMode}

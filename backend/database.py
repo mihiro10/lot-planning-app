@@ -1,6 +1,7 @@
 import sqlite3
 import os
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "lot_planning.db")
 
@@ -72,6 +73,21 @@ CREATE TABLE IF NOT EXISTS daily_values (
     UNIQUE(product_id, row_type_id, date)
 );
 
+-- Append-only: one row per write to daily_values (set or clear), kept even
+-- after the cell itself moves on to a newer value or gets deleted — this is
+-- what lets you trace "did this value disappear, and who/when" after the fact.
+CREATE TABLE IF NOT EXISTS daily_value_changes (
+    id INTEGER PRIMARY KEY,
+    product_id INTEGER NOT NULL REFERENCES products(id),
+    row_type_id INTEGER NOT NULL REFERENCES row_types(id),
+    date TEXT NOT NULL,
+    old_value REAL,
+    new_value REAL,
+    editor TEXT,
+    changed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_daily_value_changes_changed_at ON daily_value_changes(changed_at);
+
 CREATE TABLE IF NOT EXISTS cell_flags (
     id INTEGER PRIMARY KEY,
     product_id INTEGER NOT NULL REFERENCES products(id),
@@ -132,6 +148,14 @@ def init_db():
     cols = {r[1] for r in con.execute("PRAGMA table_info(daily_values)").fetchall()}
     if "text_value" not in cols:
         con.execute("ALTER TABLE daily_values ADD COLUMN text_value TEXT")
+    # updated_by/updated_at only ever tracked the latest edit and powered a
+    # hover tooltip that turned out not to be useful — superseded by the full
+    # daily_value_changes log below, which keeps every past edit, not just the
+    # last one.
+    if "updated_by" in cols:
+        con.execute("ALTER TABLE daily_values DROP COLUMN updated_by")
+    if "updated_at" in cols:
+        con.execute("ALTER TABLE daily_values DROP COLUMN updated_at")
     product_cols = {r[1] for r in con.execute("PRAGMA table_info(products)").fetchall()}
     if "status" not in product_cols:
         con.execute("ALTER TABLE products ADD COLUMN status TEXT DEFAULT '使用中'")
@@ -144,6 +168,12 @@ def init_db():
             " SELECT ?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM row_types WHERE name=?)",
             (name, role, order, is_sys, visible, name),
         )
+    # Change log is append-only by design, so it needs its own pruning —
+    # runs on every startup rather than on a timer, since this app has no
+    # background scheduler and a once-a-restart check is more than enough
+    # for a table that grows by one row per edit.
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
+    con.execute("DELETE FROM daily_value_changes WHERE changed_at < ?", (cutoff,))
     con.commit()
     con.close()
 

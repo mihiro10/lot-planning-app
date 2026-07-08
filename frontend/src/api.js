@@ -16,6 +16,10 @@ export const deleteProduct  = (id)           => api.delete(`/products/${id}`)
 export const updateValue    = (body)         => api.put('/values', body).then(r => r.data)
 export const updateValuesBatch = (updates)   => api.put('/values/batch', { updates }).then(r => r.data)
 
+// Full change history (every set/clear, not just the latest) — for tracking
+// down "did this value disappear, and who/when" during early real use
+export const getChangeLog   = (start, end, q) => api.get('/change-log', { params: { start, end, q } }).then(r => r.data)
+
 export const getProductAttributes = (productId)           => api.get(`/products/${productId}/attributes`).then(r => r.data)
 export const createAttribute      = (body)                => api.post('/attributes', body).then(r => r.data)
 export const setAttributeValue    = (productId, attrId, value) => api.put(`/attributes/${productId}/${attrId}`, { value })

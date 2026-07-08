@@ -100,6 +100,56 @@ export default function BulkEntryScreen({ products, rowTypes, onApplied }) {
     return [...byValue.entries()].map(([label, items]) => ({ label, items }))
   }, [groupFacet, selected, filteredProducts])
 
+  // Flat row order (group headers excluded) so arrow keys can jump between
+  // cells the same way Excel does — up/down move rows, left/right move
+  // columns, only crossing a cell boundary once the text cursor is already
+  // at that edge so mid-number editing isn't interrupted.
+  const flatItems = useMemo(() => groups.flatMap(g => g.items), [groups])
+  const rowIndexOf = useMemo(() => new Map(flatItems.map((p, i) => [p.id, i])), [flatItems])
+
+  const cellId = (rowIdx, colIdx) => `be-cell-${rowIdx}-${colIdx}`
+
+  const focusCell = (rowIdx, colIdx) => {
+    if (rowIdx < 0 || rowIdx >= flatItems.length || colIdx < 0 || colIdx >= activeRts.length) return
+    const el = document.getElementById(cellId(rowIdx, colIdx))
+    if (!el) return
+    // Safari (unlike Chrome) doesn't reliably auto-scroll a programmatically
+    // focused element into view, so after enough Enter/arrow presses the
+    // focus quietly moves off-screen and it looks like nothing happened.
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    el.focus()
+    el.select()
+  }
+
+  const onCellKeyDown = (e, rowIdx, colIdx) => {
+    // A composing IME's own Enter confirms the input's text, not our
+    // navigation — let that happen uninterrupted rather than fighting it.
+    if (e.nativeEvent?.isComposing || e.keyCode === 229) return
+    if (e.key === 'Enter') {
+      // Enter has no default action to fight here, but without an explicit
+      // move the input just sits there focused (or blurs) — moving down a
+      // row matches Excel/Sheets and means a following arrow key always has
+      // something focused to act on, instead of falling through to the
+      // browser's own scroll-the-page behavior.
+      e.preventDefault()
+      focusCell(rowIdx + 1, colIdx)
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault()  // also stops the native number-input spinner increment
+      focusCell(rowIdx + (e.key === 'ArrowDown' ? 1 : -1), colIdx)
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      const input = e.target
+      const atStart = input.selectionStart === 0 && input.selectionEnd === 0
+      const atEnd = input.selectionStart === input.value.length && input.selectionEnd === input.value.length
+      if (e.key === 'ArrowLeft' && atStart) {
+        e.preventDefault()
+        focusCell(rowIdx, colIdx - 1)
+      } else if (e.key === 'ArrowRight' && atEnd) {
+        e.preventDefault()
+        focusCell(rowIdx, colIdx + 1)
+      }
+    }
+  }
+
   const getValue = useCallback((pid, rtid) => {
     const key = `${pid}:${rtid}`
     if (key in inputs) return inputs[key]
@@ -204,21 +254,28 @@ export default function BulkEntryScreen({ products, rowTypes, onApplied }) {
                   {g.label && (
                     <tr><td colSpan={1 + activeRts.length} style={s.catHeader}>{g.label} ({g.items.length}件)</td></tr>
                   )}
-                  {g.items.map(p => (
-                    <tr key={p.id}>
-                      <td style={{ ...s.td, textAlign: 'left' }}>{p.name}</td>
-                      {activeRts.map(rt => (
-                        <td key={rt.id} style={s.td}>
-                          <input
-                            style={s.numInput}
-                            type="number"
-                            value={getValue(p.id, rt.id)}
-                            onChange={e => setValue(p.id, rt.id, e.target.value)}
-                          />
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
+                  {g.items.map(p => {
+                    const rowIdx = rowIndexOf.get(p.id)
+                    return (
+                      <tr key={p.id}>
+                        <td style={{ ...s.td, textAlign: 'left' }}>{p.name}</td>
+                        {activeRts.map((rt, colIdx) => (
+                          <td key={rt.id} style={s.td}>
+                            <input
+                              id={cellId(rowIdx, colIdx)}
+                              style={s.numInput}
+                              type="text"
+                              inputMode="decimal"
+                              autoComplete="off"
+                              value={getValue(p.id, rt.id)}
+                              onChange={e => setValue(p.id, rt.id, e.target.value)}
+                              onKeyDown={e => onCellKeyDown(e, rowIdx, colIdx)}
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    )
+                  })}
                 </React.Fragment>
               ))}
               {!filteredProducts.length && (

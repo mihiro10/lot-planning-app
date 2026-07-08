@@ -63,6 +63,29 @@ export default function BulkStocktakeScreen({ products, editorName, onApplied })
     return { product: p, sys, actual, actualStr, diff, warn }
   }), [products, systemValues, actuals])
 
+  // Up/down between rows, like a spreadsheet — only one editable column here
+  // so there's no left/right to handle.
+  const cellId = (idx) => `stocktake-cell-${idx}`
+  const onCellKeyDown = (e, idx) => {
+    // A composing IME's own Enter confirms the input's text, not our
+    // navigation — let that happen uninterrupted rather than fighting it.
+    if (e.nativeEvent?.isComposing || e.keyCode === 229) return
+    // Enter moves down like Excel/Sheets — without this the input just sits
+    // there (or blurs), and a following arrow key has nothing focused to act
+    // on, so it falls through to the browser's own page-scroll behavior.
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown' && e.key !== 'Enter') return
+    e.preventDefault()  // also stops the native number-input spinner increment
+    const targetIdx = idx + (e.key === 'ArrowUp' ? -1 : 1)
+    if (targetIdx < 0 || targetIdx >= visibleRows.length) return
+    const el = document.getElementById(cellId(targetIdx))
+    if (!el) return
+    // Safari doesn't reliably auto-scroll a programmatically focused element
+    // into view, so after enough presses the focus quietly moves off-screen.
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    el.focus()
+    el.select()
+  }
+
   const enteredCount = rows.filter(r => r.actualStr !== '').length
   const pct = products.length ? Math.round((enteredCount / products.length) * 100) : 0
   const visibleRows = query.trim() ? rows.filter(r => r.product.name.includes(query.trim())) : rows
@@ -116,16 +139,20 @@ export default function BulkStocktakeScreen({ products, editorName, onApplied })
           </tr>
         </thead>
         <tbody>
-          {visibleRows.map(r => (
+          {visibleRows.map((r, idx) => (
             <tr key={r.product.id} style={r.warn ? s.warnRow : undefined}>
               <td style={{ ...s.td, textAlign: 'left' }}>{r.product.name}</td>
               <td style={s.td}>{r.sys !== null ? r.sys.toLocaleString() : '—'}</td>
               <td style={s.td}>
                 <input
+                  id={cellId(idx)}
                   style={s.numInput}
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
                   value={r.actualStr}
                   onChange={e => setActuals(prev => ({ ...prev, [r.product.id]: e.target.value }))}
+                  onKeyDown={e => onCellKeyDown(e, idx)}
                 />
               </td>
               <td style={{ ...s.td, fontWeight: 700, color: r.diff == null ? '#ccc' : r.diff < 0 ? '#c0392b' : r.diff > 0 ? '#0f8a7a' : '#888' }}>
